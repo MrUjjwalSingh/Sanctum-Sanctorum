@@ -116,7 +116,10 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
 
 def get_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     """Return a loan by id, or raise 404."""
-    raise NotImplementedError("get_loan")
+    loan = db.get(Loan, loan_id)
+    if loan is None:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return to_loan_out(loan, now)
 
 
 def return_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
