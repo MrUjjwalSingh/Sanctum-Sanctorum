@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Loan, MemberTier
+from app.models import Book, Loan, MemberTier
 from app.services.members import get_member, ensure_can_access_restricted
 from app.services.books import get_book
 from app.schemas import LoanCreate, LoanOut, LoanStatus
@@ -128,7 +128,20 @@ def return_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     Rules: 404 if missing; 409 if already returned. Sets returned_at = now, restores one copy
     of stock and charges a late fee (see ``calculate_late_fee``).
     """
-    raise NotImplementedError("return_loan")
+    loan = db.get(Loan, loan_id)
+    if loan is None:
+        raise HTTPException(404, "Loan not found")
+    if loan.returned_at is not None:
+        raise HTTPException(409, "Loan already returned")
+        
+    loan.returned_at = now
+    book = db.get(Book, loan.book_id)
+    book.stock += 1
+    loan.late_fee_cents = calculate_late_fee(loan.due_at, now, book.price_cents)
+    
+    db.commit()
+    db.refresh(loan)
+    return to_loan_out(loan, now)
 
 
 def list_member_loans(
