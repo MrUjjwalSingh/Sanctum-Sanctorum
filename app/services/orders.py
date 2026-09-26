@@ -5,7 +5,8 @@ from typing import Dict
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models import Member, MemberTier, Order, OrderStatus
+from app.models import Book, Member, MemberTier, Order, OrderItem, OrderStatus
+from app.services.members import ensure_can_access_restricted
 from app.schemas import OrderCreate
 
 # Percentage discount granted by each membership tier.
@@ -39,14 +40,66 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
     Then stock is decremented for every item and prices are snapshotted.
     Pricing: discount_cents = subtotal * percent // 100; total = subtotal - discount.
     """
-    # TODO:
-    # 1. Load the member (404) and every book (404).
-    # 2. If any book is restricted, check the member's tier (403).
-    # 3. Check stock for every item before changing anything (409).
-    # 4. Decrement stock and build OrderItems with the current price as unit_price_cents.
-    # 5. Compute subtotal, discount_percent (calculate_discount_percent), discount_cents, total.
-    # 6. Save the pending Order with created_at = now and return it.
-    raise NotImplementedError("create_order")
+    # 1. Load member
+    member = db.get(Member, data.member_id)
+    if not member:
+        raise HTTPException(404, "Member not found")
+    
+    # 2. Load all books (fail fast if any missing)
+    books = {}
+    for item in data.items:
+        book = db.get(Book, item.book_id)
+        if not book:
+            raise HTTPException(404, f"Book not found")
+        books[item.book_id] = book
+        
+    # 3. Check restricted access
+    for item in data.items:
+        book = books[item.book_id]
+        if book.restricted:
+            ensure_can_access_restricted(member)  # raises 403
+            
+    # 4. Check ALL stock BEFORE changing anything
+    for item in data.items:
+        book = books[item.book_id]
+        if book.stock < item.quantity:
+            raise HTTPException(409, f"Not enough stock for book {item.book_id}")
+            
+    # 5. All checks passed — now make changes
+    total_quantity = sum(item.quantity for item in data.items)
+    order_items = []
+    subtotal = 0
+    for item in data.items:
+        book = books[item.book_id]
+        book.stock -= item.quantity               # decrement stock
+        line_total = book.price_cents * item.quantity
+        subtotal += line_total
+        order_items.append(OrderItem(
+            book_id=item.book_id,
+            quantity=item.quantity,
+            unit_price_cents=book.price_cents,     # price snapshot
+        ))
+        
+    # 6. Compute pricing
+    discount_percent = calculate_discount_percent(member, total_quantity)
+    discount_cents = subtotal * discount_percent // 100    # floor division
+    total_cents = subtotal - discount_cents
+    
+    # 7. Save
+    order = Order(
+        member_id=data.member_id,
+        status=OrderStatus.PENDING.value,
+        subtotal_cents=subtotal,
+        discount_percent=discount_percent,
+        discount_cents=discount_cents,
+        total_cents=total_cents,
+        created_at=now,
+        items=order_items,
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    return order
 
 
 def get_order(db: Session, order_id: int) -> Order:
