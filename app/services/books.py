@@ -66,7 +66,10 @@ def list_books(
         )
     if restricted is not None:
         query = query.where(Book.restricted == restricted)
-    # TODO: min_price / max_price filters
+    if min_price is not None:
+        query = query.where(Book.price_cents >= min_price)
+    if max_price is not None:
+        query = query.where(Book.price_cents <= max_price)
 
     # TODO: apply ``sort``
     books = db.scalars(query.order_by(Book.id.asc()).limit(limit).offset(offset)).all()
