@@ -14,7 +14,9 @@ def create_book(db: Session, data: BookCreate) -> Book:
 
     Rules: the (already normalized) ISBN must be unique -> 409 otherwise.
     """
-    # TODO: reject a duplicate ISBN with 409
+    existing = db.scalar(select(Book).where(Book.isbn == data.isbn))
+    if existing:
+        raise HTTPException(status_code=409, detail="ISBN already exists")
     book = Book(**data.model_dump())
     db.add(book)
     db.commit()
